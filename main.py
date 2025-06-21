@@ -52,8 +52,7 @@ async def start(message: types.Message):
                                         lines = f.readlines()
                                         if lines:
                                             code = lines[0].strip()
-                                            content = f"🔹 ТЕСТОВАЯ ВЫДАЧА:
-{code}"
+                                            content = f"🔹 ТЕСТОВАЯ ВЫДАЧА:\n{code}"{code}"
                                             f.seek(0)
                                             f.writelines(lines[1:])
                                             f.truncate()
