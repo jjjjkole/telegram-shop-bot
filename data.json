@@ -4,31 +4,9 @@
             {
                 "name": "Steam Wallet $10",
                 "price": "350 грн",
-                "desc": "Код для пополнения Steam на $10",
+                "desc": "Код на пополнение",
                 "product_id": "101",
-                "delivery": "Вот ваш товар по ID 101: ABCD-1234-5678"
-            }
-        ]
-    },
-    "Харьков": {
-        "Подписки": [
-            {
-                "name": "Netflix 1 месяц",
-                "price": "120 грн",
-                "desc": "Аккаунт на 1 месяц с доступом HD",
-                "product_id": "102",
-                "delivery": "Вот ваш товар по ID 102: ABCD-1234-5678"
-            }
-        ]
-    },
-    "Днепр": {
-        "Ключи": [
-            {
-                "name": "Minecraft Java",
-                "price": "200 грн",
-                "desc": "Оригинальный ключ Minecraft Java Edition",
-                "product_id": "103",
-                "delivery": "Вот ваш товар по ID 103: ABCD-1234-5678"
+                "delivery": "Вот ваш код: ABCD-EFGH-IJKL"
             }
         ]
     }
