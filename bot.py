@@ -52,7 +52,7 @@ async def start_cmd(message: types.Message):
         else:
             await message.answer("⚠️ Ошибка идентификатора пользователя.")
         return
-
+content = f"🔹 ТЕСТОВАЯ ВЫДАЧА:\n{code}"
     data = load_data()
     cities = list(data.keys())
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
