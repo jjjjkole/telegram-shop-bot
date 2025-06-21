@@ -5,7 +5,7 @@ import json
 import os
 from datetime import datetime
 
-BOT_TOKEN = os.getenv("7796439721:AAGDOAFhAy3km1z7wyn7OHwGr6wlnxgxC_0")
+BOT_TOKEN = "7796439721:AAGDOAFhAy3km1z7wyn7OHwGr6wlnxgxC_0"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
