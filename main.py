@@ -7,7 +7,8 @@ from contextlib import suppress
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandStart, BaseFilter
+# ИЗМЕНЕНИЕ ЗДЕСЬ: Добавили CallbackData в импорт из aiogram.filters
+from aiogram.filters import Command, CommandStart, BaseFilter, CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (CallbackQuery, InlineKeyboardButton,
@@ -15,7 +16,6 @@ from aiogram.types import (CallbackQuery, InlineKeyboardButton,
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # --- Конфигурация ---
-# Ваш токен и ID добавлены прямо сюда для теста
 TOKEN = "7710092707:AAH_Ae_pXuaFeePDgkm0zS8KfA3_GBz6H9w"
 ADMIN_ID = 5206914915
 
@@ -24,7 +24,7 @@ DATA_FILE = "data.json"
 PRODUCT_FILE = "101.txt"
 
 # --- Глобальные переменные и утилиты ---
-PAYMENT_LINK = "https://example.com/payment_landing" # ЗАМЕНИТЕ НА ВАШУ ССЫЛКУ
+PAYMENT_LINK = "https://example.com/payment_landing"
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -57,7 +57,8 @@ class AdminState(StatesGroup):
     add_city_name = State(); add_category_select_city = State(); add_category_name = State()
     add_product_select_city = State(); add_product_select_category = State(); add_product_data = State()
 
-class NavCallback(types.CallbackData, prefix="nav"):
+# ИЗМЕНЕНИЕ ЗДЕСЬ: Убрали 'types.' перед CallbackData
+class NavCallback(CallbackData, prefix="nav"):
     action: str; level: str; city: str | None = None; category: str | None = None; product: str | None = None
 
 dp = Dispatcher()
@@ -103,7 +104,6 @@ def build_dynamic_keyboard(action: str, level: str, data_dict: dict, parent_data
     if action.startswith(('add', 'delete')): nav_buttons.append(InlineKeyboardButton(text="🏠 В админ-меню", callback_data="admin_main_menu"))
     if nav_buttons: builder.row(*nav_buttons)
     return builder.as_markup()
-
 
 # --- Админ-хендлеры ---
 @dp.message(Command("admin"), IsAdmin())
