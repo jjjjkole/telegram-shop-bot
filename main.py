@@ -21,7 +21,8 @@ TOKEN = "7710092707:AAH_Ae_pXuaFeePDgkm0zS8KfA3_GBz6H9w"
 ADMIN_PASSWORD = "admin25"
 DATA_FILE = "data.json"
 PRODUCT_FILE = "101.txt"
-PAYMENT_LINK = "https://example.com/payment_landing"
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+PAYMENT_LINK = "https://visionary-hamster-5a495f.netlify.app/"
 
 # --- Настройка ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -49,7 +50,7 @@ class AdminFSM(StatesGroup):
 
 # --- CallbackData ---
 class AdminCallback(CallbackData, prefix="admin"):
-    action: str # add_city, add_category, add_product, delete_city, etc.
+    action: str
     city: str | None = None
     category: str | None = None
 
@@ -72,12 +73,10 @@ def dynamic_keyboard(items: list, context: dict = None):
     builder = InlineKeyboardBuilder()
     context = context or {}
     for item in items:
-        # Для товаров, которые хранятся как dict, item будет ключом
         display_text = item
-        # Добавляем к данным для колбэка текущий элемент
         item_context = context.copy()
-        item_context['item'] = item # Общий ключ для выбранного элемента
-        builder.button(text=display_text, callback_data=str(item)) # Используем простое имя в колбэке для FSM
+        item_context['item'] = item
+        builder.button(text=display_text, callback_data=str(item))
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_home"))
     return builder.as_markup()
@@ -199,7 +198,7 @@ def client_keyboard(level: str, items_data, context: dict = None):
         if level == 'product': display_text = f"{item} — {items_data[item]}₽"
         
         cb_data = context.copy()
-        cb_data.update({'level': level, level: item})
+        cb_data.update({'level': level, 'product' if level == 'product' else level: item})
         builder.button(text=display_text, callback_data=ClientCallback(**cb_data).pack())
     
     builder.adjust(1)
