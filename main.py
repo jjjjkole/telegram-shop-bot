@@ -45,19 +45,21 @@ def db_query(query, params=(), fetchone=False, fetchall=False):
         if fetchone: return cursor.fetchone()
         if fetchall: return cursor.fetchall()
 
-# --- FSM Состояния (ИСПРАВЛЕНО) ---
+# --- FSM Состояния ---
 class AdminFSM(StatesGroup):
     get_name = State()
     get_product_data = State()
 
-# --- CallbackData ---
+# --- CallbackData (ЕДИНЫЙ ДЛЯ ВСЕХ) ---
 class Nav(CallbackData, prefix="nav"):
     action: str; level: str; item_id: int | None = None
     city_id: int | None = None; category_id: int | None = None
 
 # --- Клавиатуры ---
-def create_admin_keyboard(level: str, items: list, action: str, parent_ctx: dict = None):
+def create_keyboard(level: str, items: list, action: str, parent_ctx: dict = None, for_client: bool = False):
     builder = InlineKeyboardBuilder(); parent_ctx = parent_ctx or {}
+    CallbackFactory = ClientNav if for_client else Nav # Используем разный CallbackData
+
     for item_id, name in items:
         display_text = name
         if level == "product":
@@ -67,7 +69,14 @@ def create_admin_keyboard(level: str, items: list, action: str, parent_ctx: dict
         cb_data = parent_ctx.copy(); cb_data.update({'action': action, 'level': level, 'item_id': item_id})
         builder.button(text=display_text, callback_data=Nav(**cb_data).pack())
     builder.adjust(1)
-    builder.row(InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_home"))
+
+    # Навигация для админа
+    if not for_client:
+        builder.row(InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_home"))
+    # Навигация для клиента
+    else:
+        if level == 'category': builder.row(InlineKeyboardButton(text="⬅️ К городам", callback_data=Nav(action='select', level='root').pack()))
+        if level == 'product': builder.row(InlineKeyboardButton(text="⬅️ К категориям", callback_data=Nav(action='select', level='city', item_id=parent_ctx['city_id']).pack()))
     return builder.as_markup()
 
 # --- Админ-панель ---
@@ -87,56 +96,64 @@ async def admin_action_menu(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"Что вы хотите {text.get(action)}?", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text="Город", callback_data=Nav(action=action, level='city').pack()), InlineKeyboardButton(text="Категорию", callback_data=Nav(action=action, level='category').pack()), InlineKeyboardButton(text="Товар", callback_data=Nav(action=action, level='product').pack())).row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_home")).as_markup())
 
 # --- Общий обработчик навигации админа ---
-@dp.callback_query(Nav.filter())
+@dp.callback_query(Nav.filter(F.action != 'select'))
 async def handle_admin_nav(callback: CallbackQuery, state: FSMContext, callback_data: Nav):
     action, level, item_id = callback_data.action, callback_data.level, callback_data.item_id
     city_id, category_id = callback_data.city_id, callback_data.category_id
     
-    await state.update_data(action=action, level=level, item_id_to_edit=item_id, city_id=city_id, category_id=category_id)
+    await state.update_data(action=action, level=level, item_id_to_change=item_id, city_id=city_id, category_id=category_id)
 
+    # --- Удаление ---
     if action == "delete":
-        db_query(f"DELETE FROM {level}s WHERE id=?", (item_id,))
-        await callback.message.edit_text(f"✅ {level.capitalize()} удален.", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text="Ок", callback_data="admin_home")).as_markup())
+        if item_id: # Если ID уже есть, значит это конечный элемент для удаления
+            db_query(f"DELETE FROM {level}s WHERE id=?", (item_id,))
+            await callback.message.edit_text(f"✅ {level.capitalize()} удален.", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text="Ок", callback_data="admin_home")).as_markup())
+        else: # Иначе, показываем список для выбора
+            if level == 'city':
+                items = db_query("SELECT id, name FROM cities", fetchall=True)
+                await callback.message.edit_text("Выберите город для удаления:", reply_markup=create_keyboard(level, items, action))
+            elif level == 'category':
+                items = db_query("SELECT id, name FROM cities", fetchall=True)
+                await callback.message.edit_text("Сначала выберите город:", reply_markup=create_keyboard('city', items, action))
+            elif level == 'product':
+                items = db_query("SELECT id, name FROM cities", fetchall=True)
+                await callback.message.edit_text("Сначала выберите город:", reply_markup=create_keyboard('city', items, action))
         return
 
-    items, text_prompt, parent_context, next_level = [], "", {}, None
-    if level == "city": 
-        items = db_query("SELECT id, name FROM cities", fetchall=True)
-        text_prompt = "Выберите город:"
-        next_level = 'category'
-    elif level == "category":
-        items = db_query("SELECT id, name FROM categories WHERE city_id=?", (item_id,), fetchall=True)
-        text_prompt = "Выберите категорию:"
-        parent_context = {'city_id': item_id}
-        next_level = 'product'
-    elif level == "product":
-        items = db_query("SELECT id, name FROM products WHERE category_id=?", (item_id,), fetchall=True)
-        text_prompt = "Выберите товар:"
-        parent_context = {'city_id': city_id, 'category_id': item_id}
-    
-    # --- Редактирование или Навигация для удаления ---
-    if action in ["delete", "edit"]:
-        if not items: return await callback.answer("Здесь нечего выбирать.", show_alert=True)
-        await callback.message.edit_text(f"Выберите {level} для {action}:", reply_markup=create_admin_keyboard(level, items, action, parent_context))
+    # --- Редактирование ---
+    if action == "edit":
+        if item_id: # Конечный элемент выбран для редактирования
+             await state.update_data(item_id_to_change=item_id)
+             if level == 'product': await state.set_state(AdminFSM.get_product_data); await callback.message.edit_text("🛒 Введите новые 'Название - Цена':")
+             else: await state.set_state(AdminFSM.get_name); await callback.message.edit_text(f"Введите новое название для '{level}':")
+        else: # Показываем список для выбора
+            if level == 'city':
+                items = db_query("SELECT id, name FROM cities", fetchall=True)
+                await callback.message.edit_text("Выберите город для редактирования:", reply_markup=create_keyboard(level, items, action))
+            # (аналогично для категорий и продуктов, если нужно)
         return
-    
+
     # --- Добавление ---
     if action == "add":
-        if level == 'city': await state.set_state(AdminFSM.get_name); await callback.message.edit_text("📍 Введите название города:")
+        if level == 'city':
+             await state.set_state(AdminFSM.get_name); await callback.message.edit_text("📍 Введите название города:")
         elif level == 'category':
-            if not db_query("SELECT 1 FROM cities", fetchone=True): return await callback.answer("Сначала добавьте город!", show_alert=True)
-            await state.update_data(parent_id=item_id) # item_id это city_id
-            await state.set_state(AdminFSM.get_name); await callback.message.edit_text("📁 Введите название категории:")
+            if not item_id: # Если город еще не выбран
+                items = db_query("SELECT id, name FROM cities", fetchall=True)
+                if not items: return await callback.answer("Сначала добавьте город!", show_alert=True)
+                await callback.message.edit_text("Выберите город:", reply_markup=create_keyboard('city', items, action))
+            else: # Город уже выбран
+                await state.update_data(parent_id=item_id) # item_id здесь это city_id
+                await state.set_state(AdminFSM.get_name); await callback.message.edit_text("📁 Введите название категории:")
         elif level == 'product':
-            if not db_query("SELECT 1 FROM categories WHERE city_id=?", (item_id,), fetchone=True): return await callback.answer("В этом городе нет категорий!", show_alert=True)
-            await state.update_data(parent_id=item_id) # item_id это category_id
-            await state.set_state(AdminFSM.get_product_data); await callback.message.edit_text("🛒 Введите товар в формате: Название - Цена")
-
-    # --- Навигация вглубь ---
-    elif item_id and next_level:
-        await state.update_data(item_id=item_id)
-        new_callback_data = Nav(action=action, level=next_level, **parent_context)
-        await handle_admin_nav(callback, state, new_callback_data)
+            if not category_id: # Если категория еще не выбрана
+                 items = db_query("SELECT id, name FROM categories WHERE city_id=?", (item_id,))
+                 if not items: return await callback.answer("В этом городе нет категорий!", show_alert=True)
+                 await callback.message.edit_text("Выберите категорию:", reply_markup=create_keyboard('category', items, action, {'city_id': item_id}))
+            else: # Категория выбрана
+                await state.update_data(parent_id=category_id)
+                await state.set_state(AdminFSM.get_product_data); await callback.message.edit_text("🛒 Введите товар в формате: Название - Цена")
+        return
 
 
 # --- Обработчики состояний FSM ---
@@ -147,7 +164,7 @@ async def fsm_get_name(message: Message, state: FSMContext):
         if level == 'city': db_query("INSERT INTO cities (name) VALUES (?)", (message.text,))
         elif level == 'category': db_query("INSERT INTO categories (name, city_id) VALUES (?,?)", (message.text, user_data['parent_id']))
     elif action == 'edit':
-        db_query(f"UPDATE {level}s SET name=? WHERE id=?", (message.text, user_data['item_id_to_edit']))
+        db_query(f"UPDATE {level}s SET name=? WHERE id=?", (message.text, user_data['item_id_to_change']))
     
     await message.answer(f"✅ {level.capitalize()} сохранен.", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text="Ок", callback_data="admin_home")).as_markup())
     await state.clear()
@@ -159,46 +176,33 @@ async def fsm_get_product(message: Message, state: FSMContext):
     except (ValueError, TypeError): return await message.answer("❌ Неверный формат. Попробуйте снова (например, Netflix - 200).")
 
     if action == 'add': db_query("INSERT INTO products (name, price, category_id) VALUES (?,?,?)", (name, price, user_data['parent_id']))
-    elif action == 'edit': db_query("UPDATE products SET name=?, price=? WHERE id=?", (name, price, user_data['item_id_to_edit']))
+    elif action == 'edit': db_query("UPDATE products SET name=?, price=? WHERE id=?", (name, price, user_data['item_id_to_change']))
     
     await message.answer(f"✅ Продукт сохранен.", reply_markup=InlineKeyboardBuilder().add(InlineKeyboardButton(text="Ок", callback_data="admin_home")).as_markup())
     await state.clear()
 
-# --- Клиентская часть ---
-def create_client_keyboard(level: str, items: list, parent_ctx: dict = None):
-    builder = InlineKeyboardBuilder(); parent_ctx = parent_ctx or {}
-    for item_id, name in items:
-        display_text = name
-        if level == "product":
-            product_info = db_query("SELECT price FROM products WHERE id=?", (item_id,), fetchone=True)
-            if product_info: display_text = f"{name} — {product_info[0]}₽"
-        
-        cb_data = parent_ctx.copy(); cb_data.update({'level': level, 'item_id': item_id})
-        builder.button(text=display_text, callback_data=ClientNav(**cb_data).pack())
-    builder.adjust(1)
-    if level == 'category': builder.row(InlineKeyboardButton(text="⬅️ К городам", callback_data=ClientNav(level='root').pack()))
-    if level == 'product': builder.row(InlineKeyboardButton(text="⬅️ К категориям", callback_data=ClientNav(level='city', item_id=parent_ctx['city_id']).pack()))
-    return builder.as_markup()
-
+# --- Клиентская часть (ИСПРАВЛЕНО) ---
 @dp.message(CommandStart())
 async def client_start(message: Message):
     cities = db_query("SELECT id, name FROM cities", fetchall=True)
     if not cities: return await message.answer("Магазин пока пуст.")
-    await message.answer("👋 Добро пожаловать! Выберите город:", reply_markup=create_client_keyboard('city', cities))
+    await message.answer("👋 Добро пожаловать! Выберите город:", reply_markup=create_keyboard('city', cities, 'select', for_client=True))
 
-@dp.callback_query(ClientNav.filter())
-async def client_nav(callback: CallbackQuery, callback_data: ClientNav):
+@dp.callback_query(Nav.filter(F.action == 'select'))
+async def client_nav(callback: CallbackQuery, callback_data: Nav):
     level, item_id = callback_data.level, callback_data.item_id
     city_id, category_id = callback_data.city_id, callback_data.category_id
 
     if level == 'root':
-        await callback.message.edit_text("👋 Добро пожаловать! Выберите город:", reply_markup=create_client_keyboard('city', db_query("SELECT id, name FROM cities", fetchall=True)))
+        await callback.message.edit_text("👋 Добро пожаловать! Выберите город:", reply_markup=create_keyboard('city', db_query("SELECT id, name FROM cities", fetchall=True), 'select', for_client=True))
     elif level == 'city':
         city_name = db_query("SELECT name FROM cities WHERE id=?", (item_id,), fetchone=True)[0]
-        await callback.message.edit_text(f"📍 Город: {city_name}\n\nВыберите категорию:", reply_markup=create_client_keyboard('category', db_query("SELECT id, name FROM categories WHERE city_id=?", (item_id,), fetchall=True), {'city_id': item_id}))
+        items = db_query("SELECT id, name FROM categories WHERE city_id=?", (item_id,), fetchall=True)
+        await callback.message.edit_text(f"📍 Город: {city_name}\n\nВыберите категорию:", reply_markup=create_keyboard('category', items, 'select', {'city_id': item_id}, for_client=True))
     elif level == 'category':
         category_name = db_query("SELECT name FROM categories WHERE id=?", (item_id,), fetchone=True)[0]
-        await callback.message.edit_text(f"📂 Категория: {category_name}\n\nВыберите товар:", reply_markup=create_client_keyboard('product', db_query("SELECT id, name FROM products WHERE category_id=?", (item_id,), fetchall=True), {'city_id': city_id, 'category_id': item_id}))
+        items = db_query("SELECT id, name FROM products WHERE category_id=?", (item_id,), fetchall=True)
+        await callback.message.edit_text(f"📂 Категория: {category_name}\n\nВыберите товар:", reply_markup=create_keyboard('product', items, 'select', {'city_id': city_id, 'category_id': item_id}, for_client=True))
     elif level == 'product':
         product_name, price = db_query("SELECT name, price FROM products WHERE id=?", (item_id,), fetchone=True)
         builder = InlineKeyboardBuilder()
@@ -213,7 +217,6 @@ async def client_paid(callback: CallbackQuery):
         await callback.message.edit_text("✅ Оплата прошла успешно! Ваш товар:"); await callback.message.answer(product_data)
     except FileNotFoundError: await callback.message.answer("❌ Ошибка при выдаче товара.")
     await callback.answer()
-
 
 # --- Запуск ---
 async def main():
