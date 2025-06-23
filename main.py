@@ -40,21 +40,13 @@ def save_data(data):
 
 # --- FSM Состояния ---
 class AdminFSM(StatesGroup):
-    # Добавление
-    add_city = State()
-    add_category_city = State()
-    add_category_name = State()
-    add_product_city = State()
-    add_product_category = State()
-    add_product_data = State()
-    # Удаление
-    delete_city = State()
-    delete_category_city = State()
-    delete_category_name = State()
-    delete_product_city = State()
-    delete_product_category = State()
-    delete_product_name = State()
-
+    add_city = State(); add_category_city = State(); add_category_name = State()
+    add_product_city = State(); add_product_category = State(); add_product_data = State()
+    delete_city = State(); delete_category_city = State(); delete_category_name = State()
+    delete_product_city = State(); delete_product_category = State(); delete_product_name = State()
+    edit_city_select = State(); edit_city_new_name = State()
+    edit_category_select_city = State(); edit_category_select_name = State(); edit_category_new_name = State()
+    edit_product_select_city = State(); edit_product_select_category = State(); edit_product_select_name = State(); edit_product_new_data = State()
 
 # --- CallbackData ---
 class AdminCallback(CallbackData, prefix="admin"):
@@ -65,69 +57,70 @@ def get_admin_menu():
     builder = InlineKeyboardBuilder()
     builder.button(text="➕ Добавить", callback_data=AdminCallback(action="add_menu").pack())
     builder.button(text="➖ Удалить", callback_data=AdminCallback(action="delete_menu").pack())
+    builder.button(text="📝 Редактировать", callback_data=AdminCallback(action="edit_menu").pack())
+    builder.adjust(3)
     return builder.as_markup()
 
-def get_add_menu():
+def get_action_menu(action_type: str):
     builder = InlineKeyboardBuilder()
-    builder.button(text="Город", callback_data=AdminCallback(action="add_city").pack())
-    builder.button(text="Категорию", callback_data=AdminCallback(action="add_category").pack())
-    builder.button(text="Товар", callback_data=AdminCallback(action="add_product").pack())
+    builder.button(text="Город", callback_data=AdminCallback(action=f"{action_type}_city").pack())
+    builder.button(text="Категорию", callback_data=AdminCallback(action=f"{action_type}_category").pack())
+    builder.button(text="Товар", callback_data=AdminCallback(action=f"{action_type}_product").pack())
     builder.row(InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_home"))
     return builder.as_markup()
-
-def get_delete_menu():
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Город", callback_data=AdminCallback(action="delete_city").pack())
-    builder.button(text="Категорию", callback_data=AdminCallback(action="delete_category").pack())
-    builder.button(text="Товар", callback_data=AdminCallback(action="delete_product").pack())
-    builder.row(InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_home"))
-    return builder.as_markup()
-
 
 def dynamic_keyboard(items: list):
     builder = InlineKeyboardBuilder()
-    for item in items:
-        builder.button(text=str(item), callback_data=str(item))
+    for item in items: builder.button(text=str(item), callback_data=str(item))
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_home"))
     return builder.as_markup()
 
-
 # --- Админ-панель ---
 @dp.message(Command(ADMIN_PASSWORD))
 async def admin_entry(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("🔑 Админ-панель. Что вы хотите сделать?", reply_markup=get_admin_menu())
+    await state.clear(); await message.answer("🔑 Админ-панель. Что вы хотите сделать?", reply_markup=get_admin_menu())
 
 @dp.callback_query(F.data == "admin_home")
 async def admin_home(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("🔑 Админ-панель. Что вы хотите сделать?", reply_markup=get_admin_menu())
+    await state.clear(); await callback.message.edit_text("🔑 Админ-панель. Что вы хотите сделать?", reply_markup=get_admin_menu())
 
-@dp.callback_query(AdminCallback.filter(F.action == "add_menu"))
-async def admin_add_menu(callback: CallbackQuery):
-    await callback.message.edit_text("Что вы хотите добавить?", reply_markup=get_add_menu())
+@dp.callback_query(AdminCallback.filter(F.action.endswith("_menu")))
+async def admin_action_menu(callback: CallbackQuery, callback_data: AdminCallback):
+    action_type = callback_data.action.split('_')[0]
+    action_text = {"add": "добавить", "delete": "удалить", "edit": "редактировать"}
+    await callback.message.edit_text(f"Что вы хотите {action_text.get(action_type, '')}?", reply_markup=get_action_menu(action_type))
 
-@dp.callback_query(AdminCallback.filter(F.action == "delete_menu"))
-async def admin_delete_menu(callback: CallbackQuery):
-    await callback.message.edit_text("Что вы хотите удалить?", reply_markup=get_delete_menu())
+# --- Общие обработчики действий ---
+@dp.callback_query(AdminCallback.filter(F.action.startswith(("add_", "delete_", "edit_"))))
+async def handle_action_start(callback: CallbackQuery, state: FSMContext, callback_data: AdminCallback):
+    action, item_type = callback_data.action.split('_')
+    data = load_data()
+    if not data and action != "add_city": return await callback.answer("Данных нет!", show_alert=True)
+    
+    state_map = {
+        ("add", "city"): (AdminFSM.add_city, "📍 Введите название города:"),
+        ("add", "category"): (AdminFSM.add_category_city, "Выберите город:"),
+        ("add", "product"): (AdminFSM.add_product_city, "Выберите город:"),
+        ("delete", "city"): (AdminFSM.delete_city, "🗑️ Выберите город для удаления:"),
+        ("delete", "category"): (AdminFSM.delete_category_city, "🗑️ Сначала выберите город:"),
+        ("delete", "product"): (AdminFSM.delete_product_city, "🗑️ Сначала выберите город:"),
+        ("edit", "city"): (AdminFSM.edit_city_select, "📝 Выберите город для редактирования:"),
+        ("edit", "category"): (AdminFSM.edit_category_select_city, "📝 Сначала выберите город:"),
+        ("edit", "product"): (AdminFSM.edit_product_select_city, "📝 Сначала выберите город:")
+    }
+    
+    current_state, text = state_map.get((action, item_type))
+    await state.set_state(current_state)
+    
+    markup = None
+    if text.startswith(("Выберите", "Сначала выберите", "Выберите город для")):
+        markup = dynamic_keyboard(list(data.keys()))
+    
+    await callback.message.edit_text(text, reply_markup=markup)
 
 
 # --- Логика добавления ---
-@dp.callback_query(AdminCallback.filter(F.action.startswith("add_")))
-async def handle_add_action(callback: CallbackQuery, state: FSMContext, callback_data: AdminCallback):
-    action = callback_data.action
-    data = load_data()
-
-    if action == "add_city":
-        await state.set_state(AdminFSM.add_city); await callback.message.edit_text("📍 Введите название города:")
-    elif action == "add_category":
-        if not data: return await callback.answer("Сначала добавьте город!", show_alert=True)
-        await state.set_state(AdminFSM.add_category_city); await callback.message.edit_text("Выберите город:", reply_markup=dynamic_keyboard(list(data.keys())))
-    elif action == "add_product":
-        if not data: return await callback.answer("Сначала добавьте город!", show_alert=True)
-        await state.set_state(AdminFSM.add_product_city); await callback.message.edit_text("Выберите город:", reply_markup=dynamic_keyboard(list(data.keys())))
-
 @dp.message(AdminFSM.add_city)
 async def add_city_finish(message: Message, state: FSMContext):
     data = load_data(); data[message.text] = {}; save_data(data)
@@ -167,20 +160,8 @@ async def add_product_finish(message: Message, state: FSMContext):
     await message.answer(f"✅ Товар '{name}' добавлен.", reply_markup=get_admin_menu())
     await state.clear()
 
-# --- Логика удаления ---
-@dp.callback_query(AdminCallback.filter(F.action.startswith("delete_")))
-async def handle_delete_action(callback: CallbackQuery, state: FSMContext, callback_data: AdminCallback):
-    action = callback_data.action
-    data = load_data()
-    if not data: return await callback.answer("Нечего удалять!", show_alert=True)
-    
-    if action == "delete_city":
-        await state.set_state(AdminFSM.delete_city); await callback.message.edit_text("🗑️ Выберите город для удаления:", reply_markup=dynamic_keyboard(list(data.keys())))
-    elif action == "delete_category":
-        await state.set_state(AdminFSM.delete_category_city); await callback.message.edit_text("🗑️ Сначала выберите город:", reply_markup=dynamic_keyboard(list(data.keys())))
-    elif action == "delete_product":
-        await state.set_state(AdminFSM.delete_product_city); await callback.message.edit_text("🗑️ Сначала выберите город:", reply_markup=dynamic_keyboard(list(data.keys())))
 
+# --- Логика удаления ---
 @dp.callback_query(AdminFSM.delete_city)
 async def delete_city_finish(callback: CallbackQuery, state: FSMContext):
     city = callback.data; data = load_data(); del data[city]; save_data(data)
@@ -210,8 +191,7 @@ async def delete_product_city_selected(callback: CallbackQuery, state: FSMContex
 
 @dp.callback_query(AdminFSM.delete_product_category)
 async def delete_product_category_selected(callback: CallbackQuery, state: FSMContext):
-    category = callback.data; user_data = await state.get_data(); city = user_data['city']
-    data = load_data()
+    category = callback.data; user_data = await state.get_data(); city = user_data['city']; data = load_data()
     if not data[city][category]: return await callback.message.edit_text("В этой категории нет товаров!", reply_markup=get_admin_menu())
     await state.update_data(category=category); await state.set_state(AdminFSM.delete_product_name)
     await callback.message.edit_text("Выберите товар для удаления:", reply_markup=dynamic_keyboard(list(data[city][category].keys())))
@@ -221,6 +201,69 @@ async def delete_product_finish(callback: CallbackQuery, state: FSMContext):
     product = callback.data; user_data = await state.get_data(); city, category = user_data['city'], user_data['category']
     data = load_data(); del data[city][category][product]; save_data(data)
     await callback.message.edit_text(f"✅ Товар '{product}' удален.", reply_markup=get_admin_menu())
+    await state.clear()
+    
+
+# --- Логика редактирования ---
+@dp.callback_query(AdminFSM.edit_city_select)
+async def edit_city_selected(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(old_city_name=callback.data); await state.set_state(AdminFSM.edit_city_new_name)
+    await callback.message.edit_text(f"Введите новое название для города '{callback.data}':")
+
+@dp.message(AdminFSM.edit_city_new_name)
+async def edit_city_finish(message: Message, state: FSMContext):
+    user_data = await state.get_data(); old_name = user_data['old_city_name']; new_name = message.text
+    data = load_data(); data[new_name] = data.pop(old_name); save_data(data)
+    await message.answer(f"✅ Город '{old_name}' переименован в '{new_name}'.", reply_markup=get_admin_menu())
+    await state.clear()
+
+@dp.callback_query(AdminFSM.edit_category_select_city)
+async def edit_category_city_selected(callback: CallbackQuery, state: FSMContext):
+    city = callback.data; data = load_data()
+    if not data.get(city): return await callback.message.edit_text("В этом городе нет категорий!", reply_markup=get_admin_menu())
+    await state.update_data(city=city); await state.set_state(AdminFSM.edit_category_select_name)
+    await callback.message.edit_text(f"Выберите категорию для редактирования в городе '{city}':", reply_markup=dynamic_keyboard(list(data[city].keys())))
+
+@dp.callback_query(AdminFSM.edit_category_select_name)
+async def edit_category_selected(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(old_category_name=callback.data); await state.set_state(AdminFSM.edit_category_new_name)
+    await callback.message.edit_text(f"Введите новое название для категории '{callback.data}':")
+
+@dp.message(AdminFSM.edit_category_new_name)
+async def edit_category_finish(message: Message, state: FSMContext):
+    user_data = await state.get_data(); city, old_name = user_data['city'], user_data['old_category_name']; new_name = message.text
+    data = load_data(); data[city][new_name] = data[city].pop(old_name); save_data(data)
+    await message.answer(f"✅ Категория '{old_name}' переименована в '{new_name}'.", reply_markup=get_admin_menu())
+    await state.clear()
+
+@dp.callback_query(AdminFSM.edit_product_select_city)
+async def edit_product_city_selected(callback: CallbackQuery, state: FSMContext):
+    city = callback.data; data = load_data()
+    if not data.get(city): return await callback.message.edit_text("В этом городе нет категорий!", reply_markup=get_admin_menu())
+    await state.update_data(city=city); await state.set_state(AdminFSM.edit_product_select_category)
+    await callback.message.edit_text("Выберите категорию:", reply_markup=dynamic_keyboard(list(data[city].keys())))
+
+@dp.callback_query(AdminFSM.edit_product_select_category)
+async def edit_product_category_selected(callback: CallbackQuery, state: FSMContext):
+    category = callback.data; user_data = await state.get_data(); city = user_data['city']; data = load_data()
+    if not data.get(city, {}).get(category): return await callback.message.edit_text("В этой категории нет товаров!", reply_markup=get_admin_menu())
+    await state.update_data(category=category); await state.set_state(AdminFSM.edit_product_select_name)
+    await callback.message.edit_text("Выберите товар для редактирования:", reply_markup=dynamic_keyboard(list(data[city][category].keys())))
+
+@dp.callback_query(AdminFSM.edit_product_select_name)
+async def edit_product_selected(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(old_product_name=callback.data); await state.set_state(AdminFSM.edit_product_new_data)
+    await callback.message.edit_text(f"Введите новые данные для товара '{callback.data}' в формате: Название - Цена")
+
+@dp.message(AdminFSM.edit_product_new_data)
+async def edit_product_finish(message: Message, state: FSMContext):
+    user_data = await state.get_data(); city, category, old_name = user_data['city'], user_data['category'], user_data['old_product_name']
+    try: new_name, price_str = message.text.split(' - '); new_price = int(price_str)
+    except (ValueError, TypeError): return await message.answer("❌ Неверный формат. Попробуйте снова (например, Netflix - 200).")
+    data = load_data(); 
+    if old_name in data[city][category]: del data[city][category][old_name]
+    data[city][category][new_name] = new_price; save_data(data)
+    await message.answer(f"✅ Товар '{old_name}' изменен на '{new_name}' с ценой {new_price}₽.", reply_markup=get_admin_menu())
     await state.clear()
 
 
@@ -274,5 +317,5 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logger.info("Бот запускается (полная версия с удалением)...")
+    logger.info("Бот запускается (v. с полным CRUD)...")
     asyncio.run(main())
