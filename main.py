@@ -8,7 +8,9 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, BaseFilter
-from aiogram.filters.callback_data import CallbackData # <--- Правильный импорт
+from aiogram.filters.callback_data import CallbackData
+# --- ИЗМЕНЕНИЕ 1: Добавляем новый импорт ---
+from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (CallbackQuery, InlineKeyboardButton,
@@ -16,7 +18,6 @@ from aiogram.types import (CallbackQuery, InlineKeyboardButton,
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # --- Конфигурация ---
-# Ваш токен и ID, как вы просили
 TOKEN = "7710092707:AAH_Ae_pXuaFeePDgkm0zS8KfA3_GBz6H9w"
 ADMIN_ID = 5206914915
 
@@ -25,7 +26,7 @@ DATA_FILE = "data.json"
 PRODUCT_FILE = "101.txt"
 
 # --- Глобальные переменные и утилиты ---
-PAYMENT_LINK = "https://example.com/payment_landing" # ЗАМЕНИТЕ НА ВАШУ ССЫЛКУ
+PAYMENT_LINK = "https://example.com/payment_landing"
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -136,6 +137,7 @@ async def process_add_city(message: Message, state: FSMContext):
     else: await message.answer(f"⚠️ Город '{city_name}' уже есть.")
     await state.clear(); await message.answer("🔑 Админ-панель:", reply_markup=get_admin_menu_keyboard())
 
+# ... (остальные хендлеры без изменений) ...
 @dp.callback_query(AdminState.add_category_select_city, IsAdmin())
 async def select_city_for_category(callback: CallbackQuery, state: FSMContext, callback_data: NavCallback):
     await state.update_data(city=callback_data.city); await state.set_state(AdminState.add_category_name); await edit_or_send_message(callback, "📁 Введите название категории:")
@@ -217,7 +219,9 @@ async def check_payment(callback: CallbackQuery):
 
 # --- Запуск бота ---
 async def main():
-    bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+    # --- ИЗМЕНЕНИЕ 2: Используем DefaultBotProperties ---
+    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
