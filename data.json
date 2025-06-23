@@ -1,1 +1,4 @@
-{"cities": [], "categories": [], "products": []}
+{
+  "cities": {},
+  "admins": []
+}
