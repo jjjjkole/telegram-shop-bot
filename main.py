@@ -1,7 +1,6 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, KeyboardButton
-from aiogram.types.reply_keyboard_markup import ReplyKeyboardMarkup
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 import json
 import os
 from datetime import datetime
@@ -31,8 +30,7 @@ def get_main_keyboard():
         keyboard=[
             [KeyboardButton(text="🛒 Каталог")],
             [KeyboardButton(text="📦 Получить товар")],
-            [KeyboardButton(text="➕ Добавить товар"), KeyboardButton(text="➖ Удалить товар")],
-            [KeyboardButton(text="➕ Добавить город"), KeyboardButton(text="➕ Добавить категорию")]
+            [KeyboardButton(text="➕ Добавить товар"), KeyboardButton(text="➖ Удалить товар")]
         ],
         resize_keyboard=True
     )
@@ -40,14 +38,12 @@ def get_main_keyboard():
 @dp.message()
 async def handle_message(message: Message):
     text = message.text.strip()
-    data = load_data()
 
     if text == "/start":
         await message.answer("Привет! Выберите действие:", reply_markup=get_main_keyboard())
 
     elif text == "📦 Получить товар":
-        content = "🔹 ТЕСТОВАЯ ВЫДАЧА:
-"
+        content = "🔹 ТЕСТОВАЯ ВЫДАЧА:"
         first = ""
         if os.path.exists(products_file):
             with open(products_file, "r", encoding="utf-8") as f:
@@ -65,40 +61,6 @@ async def handle_message(message: Message):
         if first:
             with open(orders_file, "a", encoding="utf-8") as f:
                 f.write(f"{datetime.now()} - {message.from_user.id} получил: {first}\n")
-
-    elif text == "🛒 Каталог":
-        if not data:
-            await message.answer("Каталог пуст.")
-            return
-        cities = list(data.keys())
-        await message.answer("Выберите город:
-" + "\n".join(cities))
-
-    elif text.startswith("/addcity ") and message.from_user.id in ADMIN_IDS:
-        city = text.replace("/addcity ", "").strip()
-        if city not in data:
-            data[city] = {}
-            save_data(data)
-            await message.answer(f"Город '{city}' добавлен ✅")
-        else:
-            await message.answer("Такой город уже есть.")
-
-    elif text.startswith("/addcat ") and message.from_user.id in ADMIN_IDS:
-        parts = text.split()
-        if len(parts) >= 3:
-            city = parts[1]
-            cat = " ".join(parts[2:])
-            if city in data:
-                if cat not in data[city]:
-                    data[city][cat] = []
-                    save_data(data)
-                    await message.answer(f"Категория '{cat}' в городе '{city}' добавлена ✅")
-                else:
-                    await message.answer("Такая категория уже есть.")
-            else:
-                await message.answer("Город не найден.")
-        else:
-            await message.answer("Формат: /addcat Город Категория")
 
     elif text == "➕ Добавить товар" and message.from_user.id in ADMIN_IDS:
         await message.answer("Введите товар через команду: /add ваш_товар")
