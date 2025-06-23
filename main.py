@@ -38,7 +38,6 @@ def get_main_keyboard(is_admin=False):
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
-    data = load_data()
     is_admin = message.from_user.id in ADMIN_IDS
     await message.answer("Привет! Выберите действие:", reply_markup=get_main_keyboard(is_admin))
 
@@ -48,33 +47,28 @@ async def catalog_handler(message: types.Message):
     if not data["products"]:
         await message.answer("Каталог пуст.")
         return
-    content = "📦 Каталог товаров:
-"
+    content = "📦 Каталог товаров:\n"
     for item in data["products"]:
-        content += f"- {item['name']} ({item['price']}₽)
-"
+        content += f"- {item['name']} ({item['price']}₽)\n"
     await message.answer(content)
 
 @dp.message(lambda msg: msg.text == "➕ Добавить товар")
 async def ask_add_product(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         return
-    await message.answer("Введите товар в формате: /add Название - Цена")
+    await message.answer("Введите товар в формате: Название - Цена")
 
-@dp.message(lambda msg: msg.text.startswith("/add "))
+@dp.message(lambda msg: "-" in msg.text and msg.from_user.id in ADMIN_IDS)
 async def add_product(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
     data = load_data()
     try:
-        name_price = message.text[5:].strip().split("-")
-        name = name_price[0].strip()
-        price = int(name_price[1].strip())
+        name, price = map(str.strip, message.text.split("-"))
+        price = int(price)
         data["products"].append({"name": name, "price": price})
         save_data(data)
         await message.answer("✅ Товар добавлен!")
     except Exception:
-        await message.answer("❌ Ошибка! Используй формат: /add Название - Цена")
+        await message.answer("❌ Ошибка! Используйте формат: Название - Цена")
 
 async def main():
     await dp.start_polling(bot)
