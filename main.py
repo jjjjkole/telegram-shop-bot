@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart, BaseFilter
+from aiogram.filters.callback_data import CallbackData # <--- Правильный импорт
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (CallbackQuery, InlineKeyboardButton,
@@ -15,13 +16,8 @@ from aiogram.types import (CallbackQuery, InlineKeyboardButton,
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # --- Конфигурация ---
-# Используйте НОВЫЙ токен, который вы получили от @BotFather
-TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    print("Ошибка: Токен бота не найден.")
-    exit()
-
-# ВАШ ID АДМИНИСТРАТОРА
+# Ваш токен и ID, как вы просили
+TOKEN = "7710092707:AAH_Ae_pXuaFeePDgkm0zS8KfA3_GBz6H9w"
 ADMIN_ID = 5206914915
 
 # Файлы для хранения данных
@@ -37,10 +33,10 @@ logger = logging.getLogger(__name__)
 
 # Фильтр для проверки, является ли пользователь админом
 class IsAdmin(BaseFilter):
-    async def __call__(self, message: Message) -> bool:
+    async def __call__(self, message: Message | CallbackQuery) -> bool:
         return message.from_user.id == ADMIN_ID
 
-# Функции для работы с JSON файлом (остаются без изменений)
+# Функции для работы с JSON файлом
 def load_data():
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'w', encoding='utf-8') as f: json.dump({}, f)
@@ -57,12 +53,12 @@ def save_data(data):
         with open(DATA_FILE, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=4)
     except Exception as e: logger.error(f"Ошибка при сохранении data.json: {e}")
 
-# --- FSM, CallbackData, Клавиатуры (остаются почти без изменений) ---
+# --- FSM, CallbackData, Клавиатуры ---
 class AdminState(StatesGroup):
     add_city_name = State(); add_category_select_city = State(); add_category_name = State()
     add_product_select_city = State(); add_product_select_category = State(); add_product_data = State()
 
-class NavCallback(types.CallbackData, prefix="nav"):
+class NavCallback(CallbackData, prefix="nav"):
     action: str; level: str; city: str | None = None; category: str | None = None; product: str | None = None
 
 dp = Dispatcher()
@@ -79,8 +75,7 @@ def get_admin_menu_keyboard():
     builder.adjust(2)
     return builder.as_markup()
 
-# Остальные клавиатуры и утилиты остаются такими же...
-async def edit_or_send_message(target: Message | CallbackQuery, text: str, markup: InlineKeyboardMarkup):
+async def edit_or_send_message(target: Message | CallbackQuery, text: str, markup: InlineKeyboardMarkup = None):
     if isinstance(target, CallbackQuery):
         with suppress(TelegramBadRequest): await target.message.edit_text(text, reply_markup=markup); await target.answer()
     else: await target.answer(text, reply_markup=markup)
@@ -97,18 +92,18 @@ def build_dynamic_keyboard(action: str, level: str, data_dict: dict, parent_data
         builder.button(text=display_text, callback_data=NavCallback(**callback_payload).pack())
     builder.adjust(1)
     nav_buttons = []
-    if level != 'city':
+    if level != 'city' or action.startswith('delete'):
         back_payload = parent_data.copy()
-        if 'category' in parent_data: back_payload['level'] = 'category'; del back_payload['category']
+        if 'category' in parent_data and level == 'product': back_payload['level'] = 'category'; del back_payload['category']
         elif 'city' in parent_data: back_payload['level'] = 'city'; del back_payload['city']
+        else: back_payload['level'] = 'start'
         back_payload['action'] = 'delete_start' if parent_data.get('action', '').startswith('delete') else 'select'
-        if action == 'delete' and level == 'category': back_payload['level'] = 'city'
-        if action == 'delete' and level == 'product': back_payload['level'] = 'category'
-        if back_payload.get('level'): nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=NavCallback(**back_payload).pack()))
+        if action.startswith('delete') and level == 'category': back_payload['level'] = 'city'
+        if action.startswith('delete') and level == 'product': back_payload['level'] = 'category'
+        if back_payload.get('level') != 'start': nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=NavCallback(**back_payload).pack()))
     if action.startswith(('add', 'delete')): nav_buttons.append(InlineKeyboardButton(text="🏠 В админ-меню", callback_data="admin_main_menu"))
     if nav_buttons: builder.row(*nav_buttons)
     return builder.as_markup()
-
 
 # --- Админ-хендлеры ---
 @dp.message(Command("admin"), IsAdmin())
@@ -116,19 +111,17 @@ async def admin_login(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("🔑 Админ-панель:", reply_markup=get_admin_menu_keyboard())
 
-# Применяем фильтр IsAdmin() ко всем админским действиям
 @dp.callback_query(F.data.in_(["admin_main_menu", "exit_admin"]), IsAdmin())
 async def handle_admin_nav(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    text = "🔑 Админ-панель:" if callback.data == "admin_main_menu" else "Вы вышли из админ-панели."
+    text = "🔑 Админ-панель:" if callback.data == "admin_main_menu" else "Вы вышли из админ-панели. Для входа - /admin."
     markup = get_admin_menu_keyboard() if callback.data == "admin_main_menu" else None
-    await callback.message.edit_text(text, reply_markup=markup)
-    await callback.answer()
+    await edit_or_send_message(callback, text, markup)
 
 @dp.callback_query(NavCallback.filter(F.action == 'add_start'), IsAdmin())
 async def start_add_item(callback: CallbackQuery, state: FSMContext, callback_data: NavCallback):
     level, data = callback_data.level, load_data()
-    if level == 'city': await state.set_state(AdminState.add_city_name); await edit_or_send_message(callback, "📍 Введите название города:", None)
+    if level == 'city': await state.set_state(AdminState.add_city_name); await edit_or_send_message(callback, "📍 Введите название города:")
     elif level == 'category':
         if not data: return await callback.answer("Сначала добавьте город!", show_alert=True)
         await state.set_state(AdminState.add_category_select_city); await edit_or_send_message(callback, "Выберите город:", build_dynamic_keyboard('select', 'city', data, {'action':'add_start'}))
@@ -136,7 +129,6 @@ async def start_add_item(callback: CallbackQuery, state: FSMContext, callback_da
         if not any(data.values()): return await callback.answer("Сначала добавьте категорию!", show_alert=True)
         await state.set_state(AdminState.add_product_select_city); await edit_or_send_message(callback, "Выберите город:", build_dynamic_keyboard('select', 'city', data, {'action':'add_start'}))
 
-# Остальные хендлеры (добавления, удаления) остаются прежними, но мы должны добавить фильтр IsAdmin()
 @dp.message(AdminState.add_city_name, IsAdmin())
 async def process_add_city(message: Message, state: FSMContext):
     city_name, data = message.text.strip(), load_data()
@@ -146,7 +138,7 @@ async def process_add_city(message: Message, state: FSMContext):
 
 @dp.callback_query(AdminState.add_category_select_city, IsAdmin())
 async def select_city_for_category(callback: CallbackQuery, state: FSMContext, callback_data: NavCallback):
-    await state.update_data(city=callback_data.city); await state.set_state(AdminState.add_category_name); await edit_or_send_message(callback, "📁 Введите название категории:", None)
+    await state.update_data(city=callback_data.city); await state.set_state(AdminState.add_category_name); await edit_or_send_message(callback, "📁 Введите название категории:")
 
 @dp.message(AdminState.add_category_name, IsAdmin())
 async def process_add_category(message: Message, state: FSMContext):
@@ -163,7 +155,7 @@ async def select_city_for_product(callback: CallbackQuery, state: FSMContext, ca
 
 @dp.callback_query(AdminState.add_product_select_category, IsAdmin())
 async def select_category_for_product(callback: CallbackQuery, state: FSMContext, callback_data: NavCallback):
-    await state.update_data(category=callback_data.category); await state.set_state(AdminState.add_product_data); await edit_or_send_message(callback, "🛒 Введите товар в формате: Название - Цена", None)
+    await state.update_data(category=callback_data.category); await state.set_state(AdminState.add_product_data); await edit_or_send_message(callback, "🛒 Введите товар в формате: Название - Цена")
 
 @dp.message(AdminState.add_product_data, IsAdmin())
 async def process_add_product(message: Message, state: FSMContext):
@@ -176,16 +168,19 @@ async def process_add_product(message: Message, state: FSMContext):
 
 @dp.callback_query(NavCallback.filter(F.action == 'delete_start'), IsAdmin())
 async def start_delete_item(callback: CallbackQuery, callback_data: NavCallback):
-    # (логика удаления осталась без изменений, IsAdmin уже применен к колбэку)
     level, data = callback_data.level, load_data()
     if level == 'city':
         if not data: return await callback.answer("Нечего удалять!", show_alert=True)
         await edit_or_send_message(callback, "🗑️ Выберите город для удаления:", build_dynamic_keyboard('delete', 'city', data))
-    # И так далее для других уровней...
+    elif level == 'category':
+        if not data: return await callback.answer("Сначала добавьте город!", show_alert=True)
+        await edit_or_send_message(callback, "🗑️ Сначала выберите город:", build_dynamic_keyboard('delete', 'city', data, {'action':'delete_start'}))
+    elif level == 'product':
+        if not any(data.values()): return await callback.answer("Сначала добавьте категорию!", show_alert=True)
+        await edit_or_send_message(callback, "🗑️ Сначала выберите город:", build_dynamic_keyboard('delete', 'city', data, {'action':'delete_start'}))
 
 @dp.callback_query(NavCallback.filter(F.action == 'delete'), IsAdmin())
 async def process_delete_item(callback: CallbackQuery, callback_data: NavCallback):
-    # (логика удаления осталась без изменений, IsAdmin уже применен к колбэку)
     data, msg = load_data(), ""
     city, category, product = callback_data.city, callback_data.category, callback_data.product
     if callback_data.level == 'city' and city in data: del data[city]; msg = f"Город '{city}' удален."
@@ -194,7 +189,7 @@ async def process_delete_item(callback: CallbackQuery, callback_data: NavCallbac
     if msg: save_data(data); await callback.answer(msg, show_alert=True); await callback.message.edit_text("🔑 Админ-панель:", reply_markup=get_admin_menu_keyboard())
     else: await callback.answer("Элемент не найден или уже удален.", show_alert=True)
 
-# --- Клиент-хендлеры (без изменений) ---
+# --- Клиент-хендлеры ---
 @dp.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext):
     await state.clear(); data = load_data()
