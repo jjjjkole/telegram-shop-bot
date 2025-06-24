@@ -31,12 +31,11 @@ def init_db():
     with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
         cursor.execute('PRAGMA foreign_keys = ON')
-        # Создаем таблицы, если их нет
         cursor.execute("CREATE TABLE IF NOT EXISTS cities (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL)")
         cursor.execute("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city_id INTEGER NOT NULL, FOREIGN KEY (city_id) REFERENCES cities(id) ON DELETE CASCADE)")
-        cursor.execute("CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, price INTEGER NOT NULL, category_id INTEGER NOT NULL, FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE)")
         
-        # Проверяем и добавляем колонку description, если ее нет
+        cursor.execute("CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, price INTEGER NOT NULL, category_id INTEGER NOT NULL, description TEXT, FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE)")
+        
         cursor.execute("PRAGMA table_info(products)")
         columns = [column[1] for column in cursor.fetchall()]
         if 'description' not in columns:
@@ -54,13 +53,12 @@ def db_query(query, params=(), fetchone=False, fetchall=False):
 
 # --- FSM Состояния ---
 class AdminFSM(StatesGroup):
-    add_city_name = State()
-    add_category_select_city = State(); add_category_name = State()
+    add_city_name = State(); add_category_select_city = State(); add_category_name = State()
     add_product_select_city = State(); add_product_select_category = State(); add_product_data = State(); add_product_description = State()
-    delete_select_city = State(); delete_select_category = State(); delete_select_product = State()
-    edit_select_city = State(); edit_select_category = State(); edit_select_product = State()
+    delete_select_city = State(); delete_select_category_city = State(); delete_select_category = State(); delete_select_product_city = State(); delete_select_product_category = State(); delete_select_product = State()
+    edit_select_city = State(); edit_select_category_city = State(); edit_select_category = State(); edit_select_product_city = State(); edit_select_product_category = State(); edit_select_product = State()
     edit_get_new_name = State(); edit_get_new_product_data = State(); edit_get_new_product_description = State()
-    
+
 # --- CallbackData ---
 class AdminCallback(CallbackData, prefix="adm"):
     action: str; level: str
@@ -73,9 +71,7 @@ def get_main_admin_menu():
 
 def get_action_menu(action: str):
     builder = InlineKeyboardBuilder()
-    builder.button(text="Город", callback_data=AdminCallback(action=action, level='city').pack())
-    builder.button(text="Категорию", callback_data=AdminCallback(action=action, level='category').pack())
-    builder.button(text="Товар", callback_data=AdminCallback(action=action, level='product').pack())
+    builder.button(text="Город", callback_data=AdminCallback(action=action, level='city').pack()); builder.button(text="Категорию", callback_data=AdminCallback(action=action, level='category').pack()); builder.button(text="Товар", callback_data=AdminCallback(action=action, level='product').pack())
     builder.row(InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_home"))
     return builder.as_markup()
 
@@ -84,14 +80,13 @@ def dynamic_keyboard(items: list, prefix: str):
     for item_id, name in items:
         display_text = name
         if prefix.endswith("product"):
-            price = db_query("SELECT price FROM products WHERE id=?",(item_id,), fetchone=True)[0]
-            display_text = f"{name} — {price}₽"
+            try: price = db_query("SELECT price FROM products WHERE id=?",(item_id,), fetchone=True)[0]; display_text = f"{name} — {price}₽"
+            except (TypeError, IndexError): pass
         builder.button(text=display_text, callback_data=f"{prefix}:{item_id}")
-    builder.adjust(1)
-    builder.row(InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_home"))
+    builder.adjust(1); builder.row(InlineKeyboardButton(text="⬅️ Отмена", callback_data="admin_home"))
     return builder.as_markup()
 
-# --- Админ-панель: Главное меню ---
+# --- Админ-панель ---
 @dp.message(Command(ADMIN_PASSWORD))
 async def admin_entry(message: Message, state: FSMContext):
     await state.clear(); await message.answer("🔑 Админ-панель:", reply_markup=get_main_admin_menu())
@@ -102,21 +97,18 @@ async def admin_home(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.in_({'add_menu', 'delete_menu', 'edit_menu'}))
 async def admin_action_menu(callback: CallbackQuery):
-    action = callback.data.split('_')[0]
-    text = {"add": "добавить", "delete": "удалить", "edit": "редактировать"}
+    action = callback.data.split('_')[0]; text = {"add": "добавить", "delete": "удалить", "edit": "редактировать"}
     await callback.message.edit_text(f"Что вы хотите {text.get(action)}?", reply_markup=get_action_menu(action))
 
 # --- Логика добавления ---
 @dp.callback_query(AdminCallback.filter(F.action == "add"))
 async def add_start(callback: CallbackQuery, state: FSMContext, callback_data: AdminCallback):
-    level = callback_data.level
+    level = callback_data.level; cities = db_query("SELECT id, name FROM cities", fetchall=True)
     if level == "city": await state.set_state(AdminFSM.add_city_name); await callback.message.edit_text("📍 Введите название города:")
     elif level == "category":
-        cities = db_query("SELECT id, name FROM cities", fetchall=True)
         if not cities: return await callback.answer("Сначала добавьте город!", show_alert=True)
         await state.set_state(AdminFSM.add_category_select_city); await callback.message.edit_text("Выберите город:", reply_markup=dynamic_keyboard(cities, "add_cat_city"))
     elif level == "product":
-        cities = db_query("SELECT id, name FROM cities", fetchall=True)
         if not cities: return await callback.answer("Сначала добавьте город!", show_alert=True)
         await state.set_state(AdminFSM.add_product_select_city); await callback.message.edit_text("Выберите город:", reply_markup=dynamic_keyboard(cities, "add_prod_city"))
 
@@ -145,7 +137,7 @@ async def add_product_category_selected(callback: CallbackQuery, state: FSMConte
 @dp.message(AdminFSM.add_product_data)
 async def fsm_add_product_data(message: Message, state: FSMContext):
     try: name, price_str = message.text.split(' - '); price = int(price_str)
-    except (ValueError, TypeError): return await message.answer("❌ Неверный формат. Попробуйте снова.")
+    except (ValueError, TypeError): return await message.answer("❌ Неверный формат.")
     await state.update_data(name=name, price=price); await state.set_state(AdminFSM.add_product_description)
     await message.answer("📝 Введите описание для товара. Если не нужно, отправьте прочерк '-'.")
 
@@ -157,8 +149,102 @@ async def fsm_add_product_description(message: Message, state: FSMContext):
     await message.answer(f"✅ Продукт '{name}' сохранен.", reply_markup=get_main_admin_menu()); await state.clear()
 
 
-# --- (Здесь будет код для удаления и редактирования) ---
+# --- Логика удаления ---
+@dp.callback_query(AdminCallback.filter(F.action == "delete"))
+async def delete_start(callback: CallbackQuery, state: FSMContext, callback_data: AdminCallback):
+    level = callback_data.level; cities = db_query("SELECT id, name FROM cities", fetchall=True)
+    if not cities and level != 'city': return await callback.answer("Нечего удалять!", show_alert=True)
+    if level == "city": await state.set_state(AdminFSM.delete_select_city); await callback.message.edit_text("🗑️ Выберите город для удаления:", reply_markup=dynamic_keyboard(cities, "delete_city"))
+    elif level == "category": await state.set_state(AdminFSM.delete_select_category_city); await callback.message.edit_text("🗑️ Сначала выберите город:", reply_markup=dynamic_keyboard(cities, "delete_cat_city"))
+    elif level == "product": await state.set_state(AdminFSM.delete_select_product_city); await callback.message.edit_text("🗑️ Сначала выберите город:", reply_markup=dynamic_keyboard(cities, "delete_prod_city"))
 
+@dp.callback_query(F.data.startswith("delete_city:"))
+async def delete_city_finish(callback: CallbackQuery, state: FSMContext):
+    city_id = int(callback.data.split(':')[1]); db_query("DELETE FROM cities WHERE id=?", (city_id,)); await callback.message.edit_text(f"✅ Город удален.", reply_markup=get_main_admin_menu()); await state.clear()
+
+@dp.callback_query(F.data.startswith("delete_cat_city:"))
+async def delete_category_city_selected(callback: CallbackQuery, state: FSMContext):
+    city_id = int(callback.data.split(':')[1]); categories = db_query("SELECT id, name FROM categories WHERE city_id=?", (city_id,), fetchall=True)
+    if not categories: await callback.message.edit_text("В этом городе нет категорий!", reply_markup=get_action_menu("delete")); return await callback.answer()
+    await state.set_state(AdminFSM.delete_select_category); await callback.message.edit_text("Выберите категорию для удаления:", reply_markup=dynamic_keyboard(categories, "delete_cat"))
+
+@dp.callback_query(F.data.startswith("delete_cat:"))
+async def delete_category_finish(callback: CallbackQuery, state: FSMContext):
+    cat_id = int(callback.data.split(':')[1]); db_query("DELETE FROM categories WHERE id=?", (cat_id,)); await callback.message.edit_text(f"✅ Категория удалена.", reply_markup=get_main_admin_menu()); await state.clear()
+
+@dp.callback_query(F.data.startswith("delete_prod_city:"))
+async def delete_product_city_selected(callback: CallbackQuery, state: FSMContext):
+    city_id = int(callback.data.split(':')[1]); await state.update_data(city_id=city_id); categories = db_query("SELECT id, name FROM categories WHERE city_id=?", (city_id,), fetchall=True)
+    if not categories: await callback.message.edit_text("В этом городе нет категорий!", reply_markup=get_action_menu("delete")); return await callback.answer()
+    await state.set_state(AdminFSM.delete_select_product_category); await callback.message.edit_text("Выберите категорию:", reply_markup=dynamic_keyboard(categories, "delete_prod_cat"))
+
+@dp.callback_query(F.data.startswith("delete_prod_cat:"))
+async def delete_product_category_selected(callback: CallbackQuery, state: FSMContext):
+    cat_id = int(callback.data.split(':')[1]); await state.update_data(category_id=cat_id); products = db_query("SELECT id, name FROM products WHERE category_id=?", (cat_id,), fetchall=True)
+    if not products: await callback.message.edit_text("В этой категории нет товаров!", reply_markup=get_action_menu("delete")); return await callback.answer()
+    await state.set_state(AdminFSM.delete_select_product); await callback.message.edit_text("Выберите товар для удаления:", reply_markup=dynamic_keyboard(products, "delete_prod"))
+
+@dp.callback_query(F.data.startswith("delete_prod:"))
+async def delete_product_finish(callback: CallbackQuery, state: FSMContext):
+    prod_id = int(callback.data.split(':')[1]); db_query("DELETE FROM products WHERE id=?", (prod_id,)); await callback.message.edit_text(f"✅ Товар удален.", reply_markup=get_main_admin_menu()); await state.clear()
+
+# --- Логика редактирования ---
+@dp.callback_query(AdminCallback.filter(F.action == "edit"))
+async def edit_start(callback: CallbackQuery, state: FSMContext, callback_data: AdminCallback):
+    level = callback_data.level; cities = db_query("SELECT id, name FROM cities", fetchall=True)
+    if not cities: return await callback.answer("Нечего редактировать!", show_alert=True)
+    if level == "city": await state.set_state(AdminFSM.edit_select_city); await callback.message.edit_text("📝 Выберите город для редактирования:", reply_markup=dynamic_keyboard(cities, "edit_city"))
+    elif level == "category": await state.set_state(AdminFSM.edit_select_category_city); await callback.message.edit_text("📝 Сначала выберите город:", reply_markup=dynamic_keyboard(cities, "edit_cat_city"))
+    elif level == "product": await state.set_state(AdminFSM.edit_select_product_city); await callback.message.edit_text("📝 Сначала выберите город:", reply_markup=dynamic_keyboard(cities, "edit_prod_city"))
+
+@dp.callback_query(F.data.startswith("edit_city:"))
+async def edit_city_selected(callback: CallbackQuery, state: FSMContext):
+    city_id = int(callback.data.split(':')[1]); await state.update_data(item_id=city_id, level='city'); await state.set_state(AdminFSM.edit_get_new_name); await callback.message.edit_text("Введите новое название для города:")
+
+@dp.callback_query(F.data.startswith("edit_cat_city:"))
+async def edit_category_city_selected(callback: CallbackQuery, state: FSMContext):
+    city_id = int(callback.data.split(':')[1]); categories = db_query("SELECT id, name FROM categories WHERE city_id=?", (city_id,), fetchall=True)
+    if not categories: await callback.message.edit_text("В этом городе нет категорий!", reply_markup=get_action_menu("edit")); return await callback.answer()
+    await state.set_state(AdminFSM.edit_select_category); await callback.message.edit_text("Выберите категорию для редактирования:", reply_markup=dynamic_keyboard(categories, "edit_cat"))
+
+@dp.callback_query(F.data.startswith("edit_cat:"))
+async def edit_category_selected(callback: CallbackQuery, state: FSMContext):
+    cat_id = int(callback.data.split(':')[1]); await state.update_data(item_id=cat_id, level='category'); await state.set_state(AdminFSM.edit_get_new_name); await callback.message.edit_text("Введите новое название для категории:")
+
+@dp.callback_query(F.data.startswith("edit_prod_city:"))
+async def edit_product_city_selected(callback: CallbackQuery, state: FSMContext):
+    city_id = int(callback.data.split(':')[1]); await state.update_data(city_id=city_id); categories = db_query("SELECT id, name FROM categories WHERE city_id=?", (city_id,), fetchall=True)
+    if not categories: await callback.message.edit_text("В этом городе нет категорий!", reply_markup=get_action_menu("edit")); return await callback.answer()
+    await state.set_state(AdminFSM.edit_select_product_category); await callback.message.edit_text("Выберите категорию:", reply_markup=dynamic_keyboard(categories, "edit_prod_cat"))
+
+@dp.callback_query(F.data.startswith("edit_prod_cat:"))
+async def edit_product_category_selected(callback: CallbackQuery, state: FSMContext):
+    cat_id = int(callback.data.split(':')[1]); await state.update_data(category_id=cat_id); products = db_query("SELECT id, name FROM products WHERE category_id=?", (cat_id,), fetchall=True)
+    if not products: await callback.message.edit_text("В этой категории нет товаров!", reply_markup=get_action_menu("edit")); return await callback.answer()
+    await state.set_state(AdminFSM.edit_select_product); await callback.message.edit_text("Выберите товар для редактирования:", reply_markup=dynamic_keyboard(products, "edit_prod"))
+
+@dp.callback_query(F.data.startswith("edit_prod:"))
+async def edit_product_selected(callback: CallbackQuery, state: FSMContext):
+    prod_id = int(callback.data.split(':')[1]); await state.update_data(item_id=prod_id, level='product'); await state.set_state(AdminFSM.edit_get_new_product_data); await callback.message.edit_text("Введите новые 'Название - Цена':")
+
+@dp.message(AdminFSM.edit_get_new_name)
+async def fsm_edit_get_name(message: Message, state: FSMContext):
+    user_data = await state.get_data(); level, item_id = user_data['level'], user_data['item_id']
+    db_query(f"UPDATE {level}s SET name=? WHERE id=?", (message.text, item_id)); await message.answer(f"✅ Название обновлено.", reply_markup=get_main_admin_menu()); await state.clear()
+
+@dp.message(AdminFSM.edit_get_new_product_data)
+async def fsm_edit_product_data(message: Message, state: FSMContext):
+    try: name, price_str = message.text.split(' - '); price = int(price_str)
+    except (ValueError, TypeError): return await message.answer("❌ Неверный формат.")
+    await state.update_data(name=name, price=price); await state.set_state(AdminFSM.edit_get_new_product_description)
+    await message.answer("📝 Введите новое описание (или '-' чтобы удалить):")
+
+@dp.message(AdminFSM.edit_get_new_product_description)
+async def fsm_edit_product_description(message: Message, state: FSMContext):
+    user_data = await state.get_data(); name, price, item_id = user_data['name'], user_data['price'], user_data['item_id']
+    description = None if message.text.strip() == '-' else message.text
+    db_query("UPDATE products SET name=?, price=?, description=? WHERE id=?", (name, price, description, item_id))
+    await message.answer(f"✅ Продукт '{name}' обновлен.", reply_markup=get_main_admin_menu()); await state.clear()
 
 # --- Клиентская часть ---
 def create_client_keyboard(level: str, items: list, parent_ctx: dict = None):
@@ -232,4 +318,4 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logger.info("Бот запускается (финальная, стабильная версия)..."); asyncio.run(main())
+    logger.info("Бот запускается (ПОЛНЫЙ ФУНКЦИОНАЛ)..."); asyncio.run(main())
